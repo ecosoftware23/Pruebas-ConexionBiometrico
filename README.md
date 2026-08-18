@@ -237,7 +237,30 @@ Con el panel abierto y el equipo conectado:
   `Transfer-Encoding: chunked` y sin `Content-Length` (verificado con curl). El
   cliente HTTP de estos equipos es primitivo y hay firmwares que no saben leer
   una respuesta troceada. El handler fija la cabecera explícitamente.
-- **SNI.** Vercel lo exige en el handshake TLS y se desconoce si el firmware del
-  MB10-VL lo envía. Diagnóstico: si los curl funcionan pero el dispositivo no
-  genera ni una trama en el panel, el fallo está en TLS. La salida es servidor
-  propio con nginx e IP dedicada; el stub en LAN sirve para confirmarlo antes.
+- **SNI.** Vercel lo exige. Comprobado contra el despliegue conectando por IP
+  literal, que es la única forma de suprimir el SNI en curl:
+
+  ```
+  curl -k -H "Host: <proyecto>.vercel.app" https://216.198.79.131/health
+  -> 403 Forbidden
+  ```
+
+  El handshake TLS **sí** se completa y ALPN negocia `http/1.1`, pero el edge de
+  Vercel responde **403** sin llegar nunca a la función, aunque la cabecera
+  `Host` sea correcta. Consecuencias prácticas:
+
+  - Si el firmware del MB10-VL no envía SNI, recibe un 403 y no entrega ni un
+    registro.
+  - Ese 403 **no aparece en el panel**, porque la petición muere en el edge. El
+    panel no puede diagnosticar este fallo; solo se detecta por descarte.
+  - **Firma del problema:** los `curl` de `probar.ps1` pasan las 9 pruebas, pero
+    el dispositivo conectado no genera ni una trama. Eso es SNI (o red del
+    equipo), no protocolo.
+  - Confirmación: apunta el equipo al stub en LAN (HTTP plano, sin TLS). Si ahí
+    sí habla, el protocolo está bien y el problema es la capa TLS.
+  - Salida definitiva: servidor propio con nginx e IP dedicada, donde se puede
+    servir sin exigir SNI.
+
+  Lo que **sí** está confirmado del transporte en Vercel: se negocia HTTP/1.1
+  (no HTTP/2), la cadena de certificados es válida y la respuesta lleva
+  `Content-Length` sin trocear.
