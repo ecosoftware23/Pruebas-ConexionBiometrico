@@ -196,6 +196,75 @@ que el endpoint definitivo funcionara. Están corregidos aquí:
 Lo que sí coincide y sigue pendiente de confirmar con datos reales es el orden
 de campos del `ATTLOG`. Ese es el motivo de existir de este laboratorio.
 
+## Procedimiento de conexión a un dominio
+
+Este laboratorio sirve para dos cosas: capturar el formato de las tramas **y**
+validar el paso a paso de conectar el equipo a un dominio. Esta es la segunda.
+
+El orden importa: cada ronda aísla una variable, así que un fallo dice
+exactamente dónde está el problema.
+
+### Ronda A — host corto en `.vercel.app`
+
+Objetivo: responder la pregunta grande, **¿el firmware hace HTTPS con SNI?**,
+sin que interfieran el DNS propio ni la longitud del campo.
+
+1. Vercel → *Settings → Domains → Add Domain* → `zkadms.vercel.app`. Es
+   gratis, instantáneo y no requiere DNS. Si el nombre está tomado, prueba
+   `zk-ecosolar`, `ecosolar-zk`, `zkadms-eco`.
+2. Valida desde el PC: `.\probar.ps1 -Base https://zkadms.vercel.app`. Las 9
+   pruebas en verde antes de tocar el equipo.
+3. Configura el dispositivo (ver *Guardado en el dispositivo* abajo).
+4. Observa el panel.
+
+Son 17 caracteres frente a los 38 de un nombre de proyecto largo, así que
+descarta el truncamiento del campo.
+
+### Ronda B — subdominio propio
+
+Objetivo: el ensayo real. Es el mismo tipo de host que usará producción.
+
+1. Vercel → *Settings → Domains → Add Domain* → `zk.ecosolarcolombia.com`
+   (23 caracteres; `biometrico.ecosolarcolombia.com` son 31 y deja menos
+   margen).
+2. Crea el CNAME que indique Vercel y espera a que emita el certificado.
+3. `.\probar.ps1 -Base https://zk.ecosolarcolombia.com`
+4. Repite la configuración del equipo con ese host.
+
+### Guardado en el dispositivo
+
+*Menú → Comunicación → Conf. Srvr. de Nube*. El orden importa: la dirección en
+modo dominio y la dirección en modo IP se guardan por separado, así que mover
+el interruptor **después** de escribir la dirección la borra.
+
+1. Modo de Servidor → ADMS
+2. Habilitar Nombre de Dominio → ON
+3. HTTPS → ON
+4. Habilitar Servidor Proxy → OFF
+5. **Al final**, Dirección del Servidor → el host a secas, sin `https://`, sin
+   barra final → confirmar con **OK/M**, nunca saliendo con retroceso
+6. Salir del menú paso a paso, respondiendo **Sí** a guardar
+7. **Volver a entrar al menú sin reiniciar** y verificar que quedó. Mueve el
+   cursor al inicio del campo: si no se ve el principio del host, el campo
+   truncó y hay que acortar el nombre
+8. Solo entonces, reiniciar
+
+Si tras reiniciar el campo aparece vacío, no se guardó en el paso 6.
+
+### Cómo interpretar el resultado
+
+| Síntoma | Diagnóstico |
+|---|---|
+| `probar.ps1` falla | El endpoint. Arreglar antes de seguir |
+| `probar.ps1` pasa, el equipo no genera **ninguna** trama | SNI o red del equipo. Ver *Advertencias* |
+| Llega `handshake` y luego `polling` cada 10 s | El canal está vivo. Falta marcar |
+| Llegan tramas pero el panel las pierde | Almacén en memoria. Conectar Upstash |
+| Trama con decisión `sn_rechazado` | El SN real no coincide con `ZK_ALLOWED_SN` |
+
+Antes de culpar al endpoint, verifica que el equipo tenga IP, gateway y DNS: un
+export del panel con la IP vacía significa que no tiene red, no que el servidor
+falle.
+
 ## Qué validar antes de escribir el endpoint oficial
 
 Con el panel abierto y el equipo conectado:
