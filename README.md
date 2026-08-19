@@ -175,6 +175,33 @@ Dos límites deliberados:
 Cuidado con el rango de fechas: pedir el histórico completo son cientos de POST
 consecutivos. Empieza por 24 horas.
 
+### El cuerpo crudo en la consola
+
+Cada POST del dispositivo se vuelca a la consola tal cual llegó, antes de que el
+handler tome ninguna decisión de protocolo:
+
+```
+==============================================================================
+[ZK RAW] POST /iclock/cdata · SN=CNYG213260182 · table=ATTLOG · 181 bytes · 4 lineas · saltos LF
+------------------------------------------------------------------------------
+VERBATIM (copiable tal cual):
+46	2025-01-29 06:58:48	0	15	0	0	0	0	0	0	10881
+41	2025-01-29 06:59:10	0	1	0	0	0	0	0	0	10882
+------------------------------------------------------------------------------
+ESCAPADO (separadores visibles):
+"46	2025-01-29 06:58:48	0	15	0	0	0	0	0	0	10881
+41	..."
+==============================================================================
+```
+
+Se imprime dos veces a propósito. El **verbatim** se copia y se pega
+directamente, con sus tabulaciones reales, para probar un parser contra la trama
+auténtica. El **escapado** es lo único que permite distinguir una tabulación de
+una fila de espacios.
+
+En Vercel se lee con `npx vercel logs --follow`. Los `GET` no generan volcado
+porque no traen cuerpo. Se apaga con `ZK_LOG_RAW=0`.
+
 ### Almacén persistente
 
 Por defecto las tramas viven en memoria del proceso. En Vercel cada instancia
@@ -219,8 +246,10 @@ Todas opcionales. `.env.example` tiene la plantilla.
 | `ZK_TRANS_FLAG` | `TransData AttLog` | Qué tipos de datos se solicitan |
 | `ZK_TIMEZONE` | `-5` | Zona horaria devuelta en el handshake |
 | `MIRROR_URL` | vacío | Copia de cada trama a un visor externo (webhook.site) |
+| `ZK_LOG_RAW` | `1` | Volcado del cuerpo crudo a la consola. `0` lo apaga |
+| `ZK_MAX_RAW_LOG` | `20000` | Corte del volcado crudo en consola |
 | `ZK_STORE_CAP` | `200` | Tramas conservadas en el almacén |
-| `ZK_MAX_LOG_BODY` | `4000` | Corte del cuerpo en el log |
+| `ZK_MAX_LOG_BODY` | `12000` | Corte del cuerpo guardado para el panel |
 | `ZK_MAX_MIRROR_BODY` | `2000` | Corte del cuerpo enviado al visor |
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | vacío | Almacén persistente (los inyecta la integración) |
 

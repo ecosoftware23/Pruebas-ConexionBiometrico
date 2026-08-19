@@ -76,8 +76,15 @@ const TIME_ZONE = process.env.ZK_TIMEZONE || '-5';
 const MIRROR_URL = process.env.MIRROR_URL || '';
 
 // Cortes de seguridad para no desbordar logs ni el visor.
-const MAX_LOG_BODY = parseInt(process.env.ZK_MAX_LOG_BODY || '4000', 10);
+// 12000 deja pasar entero un lote de 128 marcaciones ya escapado (~8 KB).
+const MAX_LOG_BODY = parseInt(process.env.ZK_MAX_LOG_BODY || '12000', 10);
 const MAX_MIRROR_BODY = parseInt(process.env.ZK_MAX_MIRROR_BODY || '2000', 10);
+
+// Volcado del cuerpo crudo a la consola. Es la vista forense: sirve para
+// copiar la trama tal cual la mando el equipo y probar el parser contra ella.
+// ZK_LOG_RAW=0 lo apaga; el tope evita que un blob de fotos inunde los logs.
+const LOG_RAW = process.env.ZK_LOG_RAW !== '0';
+const MAX_RAW_LOG = parseInt(process.env.ZK_MAX_RAW_LOG || '20000', 10);
 
 // --- Protocolo -----------------------------------------------------------
 
@@ -133,6 +140,46 @@ function describeBody(raw) {
   };
 }
 
+/**
+ * Escribe en la consola el cuerpo tal cual lo mando el equipo.
+ *
+ * Se imprime dos veces a proposito:
+ *   - VERBATIM: se puede copiar y pegar directamente, con sus tabulaciones
+ *     y saltos de linea reales, para probar un parser contra la trama.
+ *   - ESCAPADO: los separadores se ven como \t y \n, que es lo unico que
+ *     permite distinguir una tabulacion de una fila de espacios.
+ *
+ * En Vercel se lee con `npx vercel logs --follow`.
+ */
+function volcarCrudo(method, endpoint, sn, table, raw, body) {
+  const bytes = Buffer.byteLength(raw, 'utf8');
+  const cortado = raw.length > MAX_RAW_LOG;
+  const trozo = cortado ? raw.slice(0, MAX_RAW_LOG) : raw;
+
+  const cabecera =
+    `[ZK RAW] ${method} /iclock/${endpoint}` +
+    ` · SN=${sn}` +
+    (table ? ` · table=${table}` : '') +
+    ` · ${bytes} bytes · ${body.records} lineas · saltos ${body.eol}` +
+    (cortado ? ` · CORTADO a ${MAX_RAW_LOG} caracteres` : '');
+
+  console.log(
+    [
+      '',
+      '='.repeat(78),
+      cabecera,
+      '-'.repeat(78),
+      'VERBATIM (copiable tal cual):',
+      trozo,
+      '-'.repeat(78),
+      'ESCAPADO (separadores visibles):',
+      JSON.stringify(trozo),
+      '='.repeat(78),
+      '',
+    ].join('\n'),
+  );
+}
+
 async function mirror(payload) {
   if (!MIRROR_URL) return;
   // No espejar lotes grandes: el bin gratuito de webhook.site tope en 50
@@ -177,6 +224,11 @@ async function handle(request, ctx) {
   }
 
   const body = describeBody(raw);
+
+  // Volcado crudo a la consola, antes de cualquier decision del protocolo:
+  // si algo fallara mas abajo, la trama ya quedo registrada.
+  if (LOG_RAW && raw) volcarCrudo(request.method, endpoint, sn, table, raw, body);
+
   const snAllowed = ALLOWED_SN.length === 0 || ALLOWED_SN.includes(sn);
 
   let response = 'OK';
