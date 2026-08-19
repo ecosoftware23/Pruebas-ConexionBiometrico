@@ -74,6 +74,43 @@ function fechaZk(d) {
   );
 }
 
+/**
+ * Espejo en la consola del navegador (F12) de lo que llega del dispositivo.
+ *
+ * Existe un volcado equivalente del lado servidor, en el handler de /iclock/*,
+ * pero aquel sale en los logs de Vercel. Éste es el único visible con F12.
+ *
+ * Solo imprime tramas CON cuerpo: los GET de polling, que son la mayoría
+ * cuando el equipo está en reposo, no traen nada que volcar.
+ */
+function volcarEnConsola(frames) {
+  for (const f of frames) {
+    if (!f.body_escaped) continue;
+
+    let crudo;
+    try {
+      crudo = JSON.parse(f.body_escaped); // desescapa a la trama original
+    } catch {
+      crudo = '(no se pudo desescapar)';
+    }
+
+    const titulo =
+      `[ZK RAW] ${f.method} ${f.endpoint}` +
+      (f.table ? ` · table=${f.table}` : '') +
+      ` · ${f.records} lineas · saltos ${f.eol}` +
+      (f.truncated ? ' · TRUNCADO' : '');
+
+    // Agrupado y plegado: con lotes de 128 registros la consola se vuelve
+    // inmanejable si se imprime todo desplegado.
+    console.groupCollapsed(titulo);
+    console.log('VERBATIM (copiable tal cual):\n' + crudo);
+    console.log('ESCAPADO (separadores visibles):\n' + f.body_escaped);
+    console.log('PARSEADO:', f.body_parsed);
+    console.log('QUERY:', f.query);
+    console.groupEnd();
+  }
+}
+
 function claseDecision(d) {
   if (!d) return '';
   if (d.startsWith('datos:')) return 'datos';
@@ -141,6 +178,7 @@ export default function Panel() {
       setError(null);
 
       if (d.frames.length) {
+        volcarEnConsola(d.frames);
         setFrames((prev) => {
           const vistos = new Set(prev.map((f) => f.id));
           const nuevas = d.frames.filter((f) => !vistos.has(f.id));
@@ -404,18 +442,7 @@ export default function Panel() {
 
       <section>
         <h2>Marcaciones recibidas (ATTLOG)</h2>
-        <p className="hint">
-          Las cabeceras son la hipotesis documentada en Notion. Para validarla: haz una
-          marcacion <b>facial</b> y comprueba que el <b>15</b> cae bajo &quot;Metodo&quot; y
-          no bajo &quot;Estado&quot;. Si cae invertido, el firmware manda{' '}
-          <code>verify</code> antes que <code>status</code> y el parser debe reflejarlo.
-          {aridades.length > 0 && (
-            <>
-              {' '}Campos por registro observados: <b>{aridades.join(', ')}</b>
-              {aridades.some((n) => n !== 6) && ' — no coincide con los 6 documentados.'}
-            </>
-          )}
-        </p>
+
 
         {marcaciones.length === 0 ? (
           <div className="scroll">
@@ -628,10 +655,10 @@ export default function Panel() {
                   {Object.entries(f.query).length === 0
                     ? '(vacio)'
                     : Object.entries(f.query).map(([k, v]) => (
-                        <span key={k}>
-                          <b>{k}</b>={v}{' '}
-                        </span>
-                      ))}
+                      <span key={k}>
+                        <b>{k}</b>={v}{' '}
+                      </span>
+                    ))}
                 </div>
 
                 {f.body_escaped && (
