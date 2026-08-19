@@ -223,6 +223,7 @@ async function handle(request, ctx) {
     raw = await request.text();
   }
 
+  console.log("raw lo que se recibe del biometrico ->> ", raw);
   const body = describeBody(raw);
 
   // Volcado crudo a la consola, antes de cualquier decision del protocolo:
