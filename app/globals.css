@@ -137,3 +137,6 @@ pre {
 }
 .acciones input.cmd:focus { outline: none; border-color: var(--accent); }
 .acciones input.cmd::placeholder { color: var(--faint); }
+
+/* Nombre del empleado resuelto contra el padron */
+.tag.nombre { color: var(--accent); }

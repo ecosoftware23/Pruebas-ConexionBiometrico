@@ -114,6 +114,24 @@ Muestra, en orden de importancia:
 3. El query string, las cabeceras y el User-Agent que manda el equipo, y qué se
    le respondió exactamente.
 
+### Padrón de empleados
+
+El equipo **solo envía el PIN** en el campo 1. El nombre no viaja nunca en la
+trama: vive en el software de gestión. El panel lo resuelve contra
+`lib/empleados.js`, una tabla fija de 55 empleados, y muestra el resultado en dos
+sitios: como etiqueta junto al PIN en la tabla de marcaciones, y en el apartado
+**Quién marcó**, agregado por persona y ordenado por marcación más reciente.
+
+Los PIN que no están en el padrón aparecen como *sin registrar*. **No es un
+fallo del parser:** el dispositivo conserva marcaciones desde enero de 2025 con
+personal que ya no figura. Conviene tenerlo presente al diseñar la tabla de
+asistencia: habrá registros que no casan con ningún empleado actual, y el
+endpoint definitivo tiene que decidir qué hacer con ellos en vez de descartarlos
+en silencio.
+
+Para actualizar el padrón, edita `lib/empleados.js`. En producción esto no será
+un archivo: saldrá de la tabla de empleados de la base de datos.
+
 ### Pedir datos al dispositivo (comandos)
 
 El servidor ADMS **nunca consulta al equipo**. Lo que hacen las opciones "Cargar

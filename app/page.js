@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { empleado, TOTAL_EMPLEADOS } from '../lib/empleados';
 
 const TOPE = 200;
 
@@ -207,6 +208,41 @@ export default function Panel() {
   const aridades = [...new Set(marcaciones.map((m) => m.campos.length))].sort();
   const maxCampos = aridades.length ? Math.max(...aridades) : 6;
 
+  // Agregado por empleado. El equipo solo manda el PIN; el nombre se resuelve
+  // contra el padron de lib/empleados.js.
+  const porEmpleado = new Map();
+  for (const m of marcaciones) {
+    const pin = m.campos[0];
+    if (pin === undefined) continue;
+    let e = porEmpleado.get(pin);
+    if (!e) {
+      const info = empleado(pin);
+      e = {
+        pin,
+        nombre: info?.nombre || null,
+        depto: info?.depto || null,
+        n: 0,
+        ultima: null,
+        ultimoEstado: null,
+        metodos: new Set(),
+      };
+      porEmpleado.set(pin, e);
+    }
+    e.n += 1;
+    const f = m.campos[1];
+    if (f && (!e.ultima || f > e.ultima)) {
+      e.ultima = f;
+      e.ultimoEstado = m.campos[2];
+    }
+    const met = rotula(METODOS, m.campos[3]);
+    if (met) e.metodos.add(met);
+  }
+  // Lo mas reciente primero: la pregunta habitual es "quien acaba de marcar".
+  const actividad = [...porEmpleado.values()].sort((a, b) =>
+    (b.ultima || '').localeCompare(a.ultima || ''),
+  );
+  const sinRegistrar = actividad.filter((e) => !e.nombre).length;
+
   return (
     <div className="wrap">
       <header className="top">
@@ -291,6 +327,82 @@ export default function Panel() {
       )}
 
       <section>
+        <h2>Quién marcó</h2>
+        <p className="hint">
+          El equipo solo envía el <b>PIN</b> en el campo 1; el nombre no viaja nunca en la
+          trama. Aquí se resuelve contra el padrón de {TOTAL_EMPLEADOS} empleados. Ordenado
+          por marcación más reciente.
+          {sinRegistrar > 0 && (
+            <>
+              {' '}
+              <b>{sinRegistrar} PIN sin registrar</b>: son marcaciones del histórico con
+              personal que ya no figura en el padrón. No es un fallo del parser.
+            </>
+          )}
+        </p>
+
+        {actividad.length === 0 ? (
+          <div className="scroll">
+            <div className="empty">Sin marcaciones todavía.</div>
+          </div>
+        ) : (
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>
+                    PIN<small>campo 1</small>
+                  </th>
+                  <th>
+                    Empleado<small>del padrón</small>
+                  </th>
+                  <th>
+                    Departamento<small>del padrón</small>
+                  </th>
+                  <th>
+                    Marcaciones<small>en la ventana</small>
+                  </th>
+                  <th>
+                    Última marcación<small>campo 2</small>
+                  </th>
+                  <th>
+                    Métodos<small>campo 4</small>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {actividad.map((e) => (
+                  <tr key={e.pin}>
+                    <td>{e.pin}</td>
+                    <td>
+                      {e.nombre ? (
+                        <b style={{ color: 'var(--txt)' }}>{e.nombre}</b>
+                      ) : (
+                        <span style={{ color: 'var(--faint)' }}>sin registrar</span>
+                      )}
+                    </td>
+                    <td style={{ color: 'var(--dim)' }}>
+                      {e.depto || <span style={{ color: 'var(--faint)' }}>—</span>}
+                    </td>
+                    <td>{e.n}</td>
+                    <td>
+                      {e.ultima || '—'}
+                      {e.ultimoEstado != null && rotula(ESTADOS, e.ultimoEstado) && (
+                        <span className="tag">{rotula(ESTADOS, e.ultimoEstado)}</span>
+                      )}
+                    </td>
+                    <td style={{ color: 'var(--dim)' }}>
+                      {[...e.metodos].join(', ') || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
         <h2>Marcaciones recibidas (ATTLOG)</h2>
         <p className="hint">
           Las cabeceras son la hipotesis documentada en Notion. Para validarla: haz una
@@ -333,6 +445,8 @@ export default function Panel() {
                     <td style={{ color: 'var(--faint)' }}>{hora(m.ts)}</td>
                     {Array.from({ length: maxCampos }, (_, i) => {
                       const v = m.campos[i];
+                      // El campo 1 es el PIN: se resuelve contra el padron.
+                      const emp = i === 0 ? empleado(v) : null;
                       const et =
                         i === 2 ? rotula(ESTADOS, v) : i === 3 ? rotula(METODOS, v) : null;
                       return (
@@ -343,6 +457,12 @@ export default function Panel() {
                             <>
                               {v || <span style={{ color: 'var(--faint)' }}>vacio</span>}
                               {et && <span className="tag">{et}</span>}
+                              {i === 0 &&
+                                (emp ? (
+                                  <span className="tag nombre">{emp.nombre}</span>
+                                ) : (
+                                  <span className="tag">sin registrar</span>
+                                ))}
                             </>
                           )}
                         </td>
