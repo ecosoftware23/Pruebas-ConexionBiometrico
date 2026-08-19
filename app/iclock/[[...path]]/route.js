@@ -14,7 +14,11 @@
  */
 
 import { after } from 'next/server';
-import { pushFrame } from '../../../lib/store';
+import {
+  pushFrame,
+  takePendingCommands,
+  recordCommandResult,
+} from '../../../lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -177,6 +181,8 @@ async function handle(request, ctx) {
 
   let response = 'OK';
   let decision = 'ack';
+  let comandosEntregados = []; // ids enviados en este getrequest
+  const resultados = []; // resultados reportados en este devicecmd
 
   if (!snAllowed) {
     // Respuesta protocolar de "dispositivo no registrado".
@@ -202,11 +208,32 @@ async function handle(request, ctx) {
       decision = `datos:${table || 'sin_table'}`;
     }
   } else if (endpoint === 'getrequest') {
-    response = 'OK'; // sin comandos pendientes
-    decision = 'polling';
+    // Aqui es donde el servidor ADMS "jala" datos: no consulta al equipo,
+    // le entrega los comandos que tenga encolados y el equipo responde
+    // empujando el resultado. Cada linea va como C:<id>:<comando>.
+    const pendientes = await takePendingCommands();
+    if (pendientes.length) {
+      response = pendientes.map((c) => `C:${c.id}:${c.cmd}`).join('\n') + '\n';
+      decision = `comandos:${pendientes.length}`;
+      comandosEntregados = pendientes.map((c) => c.id);
+    } else {
+      response = 'OK'; // sin comandos pendientes
+      decision = 'polling';
+    }
   } else if (endpoint === 'devicecmd') {
+    // El equipo reporta el resultado: ID=<id>&Return=<codigo>&CMD=<tipo>.
+    // Return=0 es exito; los negativos son errores del propio equipo
+    // (-1001 capacidad llena, -1002 funcion no soportada).
+    for (const linea of raw.split(/\r?\n/)) {
+      if (!linea.trim()) continue;
+      const p = new URLSearchParams(linea.trim());
+      const id = Number(p.get('ID'));
+      if (!Number.isFinite(id)) continue;
+      const anotado = await recordCommandResult(id, p.get('Return'), p.get('CMD'));
+      if (anotado) resultados.push({ id, retorno: p.get('Return'), tipo: p.get('CMD') });
+    }
     response = 'OK'; // acuse del resultado de un comando
-    decision = 'resultado_comando';
+    decision = resultados.length ? `resultado:${resultados.length}` : 'resultado_comando';
   }
 
   const ts = Date.now();
@@ -230,6 +257,8 @@ async function handle(request, ctx) {
     eol: body.eol,
     truncated: body.truncated,
     responded: response.split('\n')[0],
+    comandos_entregados: comandosEntregados,
+    resultados_comando: resultados,
   };
 
   console.log('[ZK]', JSON.stringify(record));

@@ -126,3 +126,14 @@ pre {
 
 .empty { padding: 40px 20px; text-align: center; color: var(--faint); font-size: 13px; }
 .empty code { font-family: var(--mono); color: var(--dim); }
+
+/* --- Acciones de comandos --- */
+.acciones { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.acciones input.cmd {
+  flex: 1 1 340px; min-width: 0;
+  background: #0a0e13; color: var(--txt);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 11px; font-family: var(--mono); font-size: 12.5px;
+}
+.acciones input.cmd:focus { outline: none; border-color: var(--accent); }
+.acciones input.cmd::placeholder { color: var(--faint); }

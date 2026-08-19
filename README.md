@@ -114,6 +114,49 @@ Muestra, en orden de importancia:
 3. El query string, las cabeceras y el User-Agent que manda el equipo, y qué se
    le respondió exactamente.
 
+### Pedir datos al dispositivo (comandos)
+
+El servidor ADMS **nunca consulta al equipo**. Lo que hacen las opciones "Cargar
+datos desde el dispositivo" de BioTime es encolar un comando que el equipo
+recoge en su siguiente `GET /iclock/getrequest` — cada 10 segundos con
+`Delay=10` — y después el equipo empuja la respuesta como una trama normal.
+
+El panel implementa lo mismo. Cada comando sale al equipo así:
+
+```
+C:<id>:<comando>
+```
+
+y el equipo reporta el resultado con `POST /iclock/devicecmd`, enviando
+`ID=<id>&Return=<codigo>&CMD=<tipo>`. `Return=0` es éxito; los negativos son
+errores del propio equipo (`-1001` capacidad llena, `-1002` no soportado).
+
+Botones disponibles:
+
+| Botón | Comando |
+|---|---|
+| Pedir marcaciones (últimas 24 h) | `DATA QUERY ATTLOG StartTime=…` + TAB + `EndTime=…` |
+| Pedir usuarios | `DATA QUERY USERINFO PIN=` |
+| Info del equipo | `INFO` |
+
+Más un campo libre, porque **el dialecto exacto varía entre firmwares**: lanza,
+mira qué contesta el equipo en las tramas y ajusta. Ése es justamente el trabajo
+del laboratorio.
+
+Dos límites deliberados:
+
+- **Solo funciona con el equipo conectado.** Si no está enviando tramas, los
+  comandos se quedan encolados esperando. No es una vía para alcanzar un equipo
+  que no reporta.
+- **Los comandos destructivos están bloqueados** (`CLEAR LOG`, `CLEAR DATA`,
+  `DELETE USER`, `FACTORY`…). El equipo tiene 44.718 transacciones acumuladas y
+  un borrado mal lanzado no tiene vuelta atrás. Si algún día hacen falta, que sea
+  contra la base de datos definitiva y de forma deliberada, no desde un banco de
+  pruebas.
+
+Cuidado con el rango de fechas: pedir el histórico completo son cientos de POST
+consecutivos. Empieza por 24 horas.
+
 ### Almacén persistente
 
 Por defecto las tramas viven en memoria del proceso. En Vercel cada instancia

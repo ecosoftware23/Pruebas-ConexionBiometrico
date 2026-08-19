@@ -64,6 +64,15 @@ function hora(ts) {
   return new Date(ts).toLocaleTimeString('es-CO', { hour12: false });
 }
 
+/** Formato de fecha que espera ADMS en los comandos: YYYY-MM-DD HH:MM:SS */
+function fechaZk(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
+}
+
 function claseDecision(d) {
   if (!d) return '';
   if (d.startsWith('datos:')) return 'datos';
@@ -77,12 +86,49 @@ export default function Panel() {
   const [error, setError] = useState(null);
   const [pausado, setPausado] = useState(false);
   const [intervalo, setIntervalo] = useState(3000);
+  const [comandos, setComandos] = useState([]);
+  const [cmdLibre, setCmdLibre] = useState('');
+  const [avisoCmd, setAvisoCmd] = useState(null);
   const [, setTic] = useState(0); // solo fuerza el refresco de los "hace Xs"
 
   const cursor = useRef(0);
   const desfase = useRef(0); // reloj del servidor menos el del navegador
 
+  const cargarComandos = useCallback(async () => {
+    try {
+      const r = await fetch('/api/commands', { cache: 'no-store' });
+      if (r.ok) setComandos((await r.json()).comandos || []);
+    } catch {
+      /* el error de tramas ya se muestra arriba */
+    }
+  }, []);
+
+  const enviarComando = useCallback(
+    async (cmd) => {
+      setAvisoCmd(null);
+      try {
+        const r = await fetch('/api/commands', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cmd }),
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          setAvisoCmd(d.error || `HTTP ${r.status}`);
+        } else {
+          setAvisoCmd(`Encolado C:${d.comando.id} — se entrega en el proximo getrequest`);
+          setCmdLibre('');
+        }
+      } catch (e) {
+        setAvisoCmd(e.message);
+      }
+      cargarComandos();
+    },
+    [cargarComandos],
+  );
+
   const cargar = useCallback(async () => {
+    cargarComandos();
     try {
       const r = await fetch(`/api/frames?after=${cursor.current}`, { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -105,7 +151,7 @@ export default function Panel() {
     } catch (e) {
       setError(e.message);
     }
-  }, []);
+  }, [cargarComandos]);
 
   // Sondeo. Se detiene al pausar y cuando la pestana no esta visible,
   // para no gastar invocaciones de Vercel de balde.
@@ -304,6 +350,119 @@ export default function Panel() {
                     })}
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2>Pedir datos al dispositivo</h2>
+        <p className="hint">
+          El servidor ADMS nunca consulta al equipo: encola un comando y el equipo lo
+          recoge en su siguiente <code>getrequest</code>, cada 10 segundos. Después empuja
+          la respuesta como una trama normal. Es exactamente lo que hacen las opciones
+          &quot;Cargar datos desde el dispositivo&quot; de BioTime.
+          <br />
+          <b>Solo funciona con el equipo conectado.</b> Si no está enviando tramas, los
+          comandos se quedan encolados esperando.
+        </p>
+
+        <div className="acciones">
+          <button
+            onClick={() => {
+              const fin = new Date();
+              const ini = new Date(fin.getTime() - 24 * 3600 * 1000);
+              enviarComando(
+                `DATA QUERY ATTLOG StartTime=${fechaZk(ini)}\tEndTime=${fechaZk(fin)}`,
+              );
+            }}
+          >
+            Pedir marcaciones (últimas 24 h)
+          </button>
+          <button onClick={() => enviarComando('DATA QUERY USERINFO PIN=')}>
+            Pedir usuarios
+          </button>
+          <button onClick={() => enviarComando('INFO')}>Info del equipo</button>
+        </div>
+
+        <div className="acciones">
+          <input
+            className="cmd"
+            value={cmdLibre}
+            placeholder="Comando libre, p. ej.  DATA QUERY ATTLOG StartTime=..."
+            onChange={(e) => setCmdLibre(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && cmdLibre.trim()) enviarComando(cmdLibre);
+            }}
+          />
+          <button onClick={() => cmdLibre.trim() && enviarComando(cmdLibre)}>Encolar</button>
+        </div>
+
+        <p className="hint">
+          El prefijo <code>C:&lt;id&gt;:</code> lo pone el servidor; escribe solo el comando.
+          Los separadores entre parámetros son tabulaciones reales. El dialecto exacto varía
+          entre firmwares — por eso está el campo libre: lanza, mira qué contesta el equipo
+          en las tramas y ajusta. Los comandos destructivos (<code>CLEAR LOG</code> y
+          similares) están bloqueados a propósito.
+        </p>
+
+        {avisoCmd && <div className="note">{avisoCmd}</div>}
+
+        {comandos.length === 0 ? (
+          <div className="scroll">
+            <div className="empty">Ningún comando encolado todavía.</div>
+          </div>
+        ) : (
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Comando</th>
+                  <th>Estado</th>
+                  <th>Retorno</th>
+                  <th>Encolado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comandos.map((c) => {
+                  const ok = c.retorno === '0' || c.retorno === 0;
+                  return (
+                    <tr key={c.id}>
+                      <td>{c.id}</td>
+                      <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                        {c.cmd.replace(/\t/g, ' ⇥ ')}
+                      </td>
+                      <td>
+                        <span className={`pill ${c.estado === 'respondido' ? (ok ? 'marcaciones' : 'sn_rechazado') : c.estado === 'entregado' ? 'handshake' : 'datos'}`}>
+                          {c.estado}
+                        </span>
+                      </td>
+                      <td>
+                        {c.retorno == null ? (
+                          <span style={{ color: 'var(--faint)' }}>—</span>
+                        ) : (
+                          <>
+                            {c.retorno}
+                            {ok ? (
+                              <span className="tag">éxito</span>
+                            ) : (
+                              <span className="tag">
+                                {String(c.retorno) === '-1001'
+                                  ? 'capacidad llena'
+                                  : String(c.retorno) === '-1002'
+                                    ? 'no soportado'
+                                    : 'error del equipo'}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </td>
+                      <td style={{ color: 'var(--faint)' }}>{hora(c.creado_ts)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
