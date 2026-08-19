@@ -53,6 +53,160 @@ Escapado, tal como lo ve el código:
 Los campos 7 a 10 llegaron en cero en toda la muestra (250 registros), así que
 su significado no se puede deducir de los datos. Reservarlos y no interpretarlos.
 
+## Ejemplos reales
+
+Todos capturados del equipo. La petición es **siempre la misma**, cambia solo el
+cuerpo:
+
+```
+POST /iclock/cdata?SN=CNYG213260182&table=ATTLOG&Stamp=9999
+User-Agent: iClock Proxy/1.09
+Content-Type: text/plain
+```
+
+**Entrada por rostro** — campo 3 = `0`, campo 4 = `15`:
+
+```
+46	2025-01-29 06:58:48	0	15	0	0	0	0	0	0	10881
+```
+
+**Entrada por huella** — campo 3 = `0`, campo 4 = `1`:
+
+```
+41	2025-01-29 06:59:10	0	1	0	0	0	0	0	0	10882
+```
+
+**Salida por huella** — campo 3 = `1`:
+
+```
+8	2025-01-29 12:10:17	1	1	0	0	0	0	0	0	10902
+```
+
+**Salida por rostro** — campo 3 = `1`, campo 4 = `15`:
+
+```
+36	2025-01-29 12:11:56	1	15	0	0	0	0	0	0	10904
+```
+
+La **única** diferencia entre una entrada y una salida es el campo 3. Misma
+ruta, mismo método HTTP, mismo `table=ATTLOG`. No hay endpoints distintos.
+
+### Varios registros de golpe
+
+Cuando el equipo acumula — tras una caída de red, o al ver un servidor nuevo —
+manda **hasta 128 registros por POST**, un lote cada 8–9 segundos. Lote real:
+
+```
+46	2025-01-29 06:58:48	0	15	0	0	0	0	0	0	10881
+41	2025-01-29 06:59:10	0	1	0	0	0	0	0	0	10882
+11	2025-01-29 06:59:32	0	1	0	0	0	0	0	0	10883
+47	2025-01-29 06:59:59	0	1	0	0	0	0	0	0	10884
+15	2025-01-29 07:00:07	0	1	0	0	0	0	0	0	10885
+12	2025-01-29 07:00:30	0	15	0	0	0	0	0	0	10886
+```
+
+Respuesta esperada: `OK: 6`.
+
+Con `Realtime=1` una marcación suelta llega como un POST idéntico con **una sola
+línea**. El lote y la marcación individual **no se distinguen**: es el mismo
+endpoint recibiendo entre 1 y 128 líneas. El backend debe iterar siempre.
+
+### Así lo ve el código
+
+Con `await request.text()`, el string real que procesa Node:
+
+```
+"46\t2025-01-29 06:58:48\t0\t15\t0\t0\t0\t0\t0\t0\t10881\n41\t2025-01-29 06:59:10\t0\t1\t0\t0\t0\t0\t0\t0\t10882\n"
+```
+
+El cuerpo **termina en salto de línea**, así que al cortar queda una última
+entrada vacía que hay que descartar.
+
+### Parser listo para el endpoint
+
+```js
+const CAMPOS_ATTLOG = 11;
+
+function parseAttlog(raw, sn) {
+  const validos = [];
+  const descartadas = [];
+
+  for (const linea of raw.split(/\r?\n/)) {  // \r?\n: hay firmwares con CRLF
+    if (!linea) continue;                    // la linea vacia final
+    const c = linea.split('\t');
+
+    // Una linea corta significa cuerpo truncado: conexion cortada a mitad del
+    // POST. NO se puede parsear "lo que se entienda": el campo 11 faltaria y
+    // el secuencial saldria NaN, que es justo la clave de idempotencia.
+    if (c.length < CAMPOS_ATTLOG) {
+      descartadas.push(linea);
+      continue;
+    }
+
+    const r = {
+      numero_serie: sn,          // viene del query string, no del cuerpo
+      pin: c[0],                 // ID del empleado en el equipo
+      marcada_en: c[1],          // 'YYYY-MM-DD HH:MM:SS', hora local del equipo
+      estado: Number(c[2]),      // 0 entrada, 1 salida
+      metodo: Number(c[3]),      // 1 huella, 15 rostro
+      work_code: Number(c[4]),
+      secuencial: Number(c[10]), // campo 11: clave de idempotencia
+      crudo: linea,              // guardar el original ayuda a depurar
+    };
+
+    if (!r.pin || !r.marcada_en || !Number.isFinite(r.secuencial)) {
+      descartadas.push(linea);
+      continue;
+    }
+    validos.push(r);
+  }
+
+  return { validos, descartadas };
+}
+```
+
+**Por qué el filtro por número de campos.** Al probar este parser contra la
+trama real, la última línea traía 9 campos en vez de 11 y producía
+`secuencial: NaN` — pasando los filtros ingenuos de `pin` y `marcada_en`. Un
+`NaN` en la clave de idempotencia rompe el `ON CONFLICT` en silencio y deja
+entrar duplicados.
+
+En ese caso concreto la truncó el propio laboratorio a 4.000 caracteres, pero en
+producción pasa lo mismo si la conexión se corta a mitad del POST. Descartar y
+registrar es más seguro que adivinar.
+
+Y el handler:
+
+```js
+const url = new URL(request.url);
+const sn = url.searchParams.get('SN');
+const raw = await request.text();          // NUNCA request.json()
+
+if (url.searchParams.get('table') !== 'ATTLOG') {
+  return textoPlano('OK');                 // ficha del equipo y otras tablas
+}
+
+const { validos, descartadas } = parseAttlog(raw, sn);
+
+if (descartadas.length) {
+  // Casi siempre significa cuerpo truncado. Conviene alertar, no ignorarlo.
+  console.error('[ATTLOG] lineas descartadas', { sn, n: descartadas.length });
+}
+
+await guardar(validos);                    // INSERT ... ON CONFLICT DO NOTHING
+
+// El OK solo DESPUES de escribir en base de datos, y con el numero
+// realmente persistido, no el de lineas recibidas.
+return textoPlano(`OK: ${validos.length}`);
+```
+
+### Cuatro trampas al armar el endpoint
+
+1. **El SN no está en el cuerpo**, viaja en el query string.
+2. **Un POST puede traer 1 o 128 líneas.** Iterar siempre.
+3. **El mismo registro puede llegar muchas veces.** `secuencial` + SN es la clave única.
+4. **Responder `OK: <n>` solo en `table=ATTLOG`.** En `table=options` va `OK` pelado.
+
 ## Correcciones respecto a lo documentado en Notion
 
 **Lo que Notion acierta:** el orden de los primeros cuatro campos. El `15` de una
